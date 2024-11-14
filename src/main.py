@@ -1,23 +1,40 @@
 from tqdm import tqdm
 from glob import glob
-from typing import Iterable
 import os
 import pandas as pd
 from tkinter import filedialog
 from logging import Logger
 from model.concrete import Model
+from loader import parquet_loader
 
-def filter(path:str, data:pd.DataFrame) -> bool:
-    """
-第一引数にファイルパス、第二引数にデータフレームを受けとります。
-parquetファイルをロードした直後に実行され、Falseを返すと処理をスキップできます。
-    """
-    return True
+#loader-configs---------------------------
+TARGET_WORDS = [
+    'spacex',
+    'tesla',
+    'eron',
+    'musk'
+]
+TARGET_COLUMNS = [
+    'text'
+]
+CASE_SENSITIVE = False
+CHUNK_SIZE = 10000
+USE_N_CPU_CORES = -1
+#-----------------------------------------
 
 def build(inputFileName: str, outputFileName: str, model:Model) -> None:
-    pass
+    input_df = parquet_loader(inputFileName, TARGET_WORDS, TARGET_COLUMNS, CASE_SENSITIVE, CHUNK_SIZE, USE_N_CPU_CORES)
+
+    modelResponses = model.analyze(input_df['text'])
+    output_df = pd.DataFrame({
+        'timestamp': input_df['timestamp'].tolist(),
+        'label': map(lambda x:x['label'], modelResponses),
+        'score': map(lambda x:x['score'], modelResponses)
+    })
+    output_df.to_csv(outputFileName)
 
 def main():
+    #インスタンス初期化-------------------------------
     logger = Logger('builder')
     model = Model()
 
@@ -39,7 +56,7 @@ def main():
 
     #読み込み対象のファイルを検出 & 出力先を割り当て-----
     targets = glob('*.parquet', root_dir=readDirName)
-    exports = [writeDirName + '/cc_semtiment_' + str(i+1).zfill(3) for i in range(len(targets))]
+    exports = [writeDirName + '/cc_semtiment_' + str(i+1).zfill(3) + '.csv' for i in range(len(targets))]
     
     #処理開始前最終確認--------------------------------
     confirminationTexts = [
