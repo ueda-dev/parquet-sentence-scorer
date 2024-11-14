@@ -3,6 +3,7 @@ import pandas as pd
 import ahocorasick
 from concurrent.futures import ProcessPoolExecutor
 import numpy as np
+from functools import partial
 
 class TextFilter:
     def __init__(self, keywords: List[str], case_sensitive: bool = False):
@@ -28,14 +29,8 @@ class TextFilter:
     def _contains_any_keyword(self, text: str) -> bool:
         """
         テキストに任意のキーワードが含まれているかチェック
-        
-        Args:
-            text: 検索対象テキスト
-            
-        Returns:
-            bool: キーワードが含まれている場合True
         """
-        if pd.isna(text):  # None や NaN の処理
+        if pd.isna(text):
             return False
             
         if not self.case_sensitive:
@@ -43,32 +38,33 @@ class TextFilter:
         else:
             text = str(text)
             
-        # イテレータを使って最初のマッチを確認
         try:
             next(self.automaton.iter(text))
             return True
         except StopIteration:
             return False
 
-    def _find_matched_keywords(self, text: str) -> Set[str]:
+    def _process_chunk(self, chunk_data: tuple) -> np.ndarray:
         """
-        テキストに含まれるキーワードを全て抽出
+        データチャンクを処理するクラスメソッド
         
         Args:
-            text: 検索対象テキスト
+            chunk_data: (chunk_df, text_columns)のタプル
             
         Returns:
-            Set[str]: マッチしたキーワードのセット
+            np.ndarray: ブールマスク
         """
-        if pd.isna(text):
-            return set()
-            
-        if not self.case_sensitive:
-            text = str(text).lower()
-        else:
-            text = str(text)
-            
-        return {keyword for _, (_, keyword) in self.automaton.iter(text)}
+        chunk_df, text_columns = chunk_data
+        column_masks = []
+        
+        for col in text_columns:
+            if col in chunk_df.columns:
+                mask = chunk_df[col].fillna('').apply(self._contains_any_keyword)
+                column_masks.append(mask)
+        
+        if column_masks:
+            return np.any(column_masks, axis=0)
+        return np.zeros(len(chunk_df), dtype=bool)
 
     def create_filter_mask(self, 
                          df: pd.DataFrame, 
@@ -87,47 +83,34 @@ class TextFilter:
         Returns:
             pd.Series: ブールマスク（キーワードを含む行がTrue）
         """
-        def process_chunk(chunk_df: pd.DataFrame) -> np.ndarray:
-            # 各テキスト列に対してキーワードチェック
-            column_masks = []
-            for col in text_columns:
-                if col in chunk_df.columns:
-                    mask = chunk_df[col].fillna('').apply(self._contains_any_keyword)
-                    column_masks.append(mask)
-            
-            # いずれかの列でマッチした行を特定
-            if column_masks:
-                return np.any(column_masks, axis=0)
-            return np.zeros(len(chunk_df), dtype=bool)
-
-        # データフレームを分割して並列処理
-        if len(df) > chunk_size and n_jobs != 1:
-            chunks = [df[i:i + chunk_size] for i in range(0, len(df), chunk_size)]
-            
-            with ProcessPoolExecutor(max_workers=n_jobs) as executor:
-                results = list(executor.map(process_chunk, chunks))
-            
-            return pd.Series(np.concatenate(results), index=df.index)
-        else:
-            return pd.Series(process_chunk(df), index=df.index)
+        # 小さなデータセットまたは単一プロセスの場合
+        if len(df) <= chunk_size or n_jobs == 1:
+            return pd.Series(self._process_chunk((df, text_columns)), index=df.index)
+        
+        # データフレームをチャンクに分割
+        chunks = [df[i:i + chunk_size] for i in range(0, len(df), chunk_size)]
+        chunk_data = [(chunk, text_columns) for chunk in chunks]
+        
+        # 並列処理の実行
+        with ProcessPoolExecutor(max_workers=n_jobs) as executor:
+            results = list(executor.map(self._process_chunk, chunk_data))
+        
+        # 結果の結合
+        return pd.Series(np.concatenate(results), index=df.index)
 
     def find_matches_in_row(self, 
                           row: pd.Series, 
                           text_columns: List[str]) -> Set[str]:
         """
         行内の指定された列から全てのマッチするキーワードを抽出
-        
-        Args:
-            row: DataFrame の1行
-            text_columns: テキストを含む列名のリスト
-            
-        Returns:
-            Set[str]: マッチしたキーワードのセット
         """
         matches = set()
         for col in text_columns:
             if col in row.index and not pd.isna(row[col]):
-                matches.update(self._find_matched_keywords(str(row[col])))
+                text = str(row[col])
+                if not self.case_sensitive:
+                    text = text.lower()
+                matches.update(keyword for _, (_, keyword) in self.automaton.iter(text))
         return matches
 
 def parquet_loader(parquet_path: str,
@@ -157,12 +140,17 @@ def parquet_loader(parquet_path: str,
     df = pd.read_parquet(parquet_path)
     
     # フィルタマスクの作成
-    mask = text_filter.create_filter_mask(df, text_columns, chunk_size, n_jobs)
+    mask = text_filter.create_filter_mask(
+        df=df,
+        text_columns=text_columns,
+        chunk_size=chunk_size,
+        n_jobs=n_jobs
+    )
     
     # フィルタされたデータフレームを取得
     filtered_df = df[mask].copy()
     
-    # マッチしたキーワードを追加（オプション）
+    # マッチしたキーワードを追加
     if len(filtered_df) > 0:
         filtered_df['matched_keywords'] = filtered_df.apply(
             lambda row: text_filter.find_matches_in_row(row, text_columns),
@@ -172,19 +160,18 @@ def parquet_loader(parquet_path: str,
     return filtered_df
 
 # 使用例
-def main():
+if __name__ == "__main__":
     # パラメータ設定
     parquet_path = "path/to/your/data.parquet"
     keywords = [
         "企業名",
         "製品名",
         "サービス名",
-        # ... 他のキーワード
     ]
-    text_columns = ['title', 'content', 'description']  # 検索対象の列
+    text_columns = ['title', 'content', 'description']
     
     # フィルタリングの実行
-    filtered_df = parquet_loader(
+    filtered_df = filter_parquet_file(
         parquet_path=parquet_path,
         keywords=keywords,
         text_columns=text_columns,
@@ -195,6 +182,4 @@ def main():
     
     # 結果の確認
     print(f"Matched rows: {len(filtered_df)}")
-    
-    # 結果の保存（必要に応じて）
     filtered_df.to_parquet("filtered_results.parquet")

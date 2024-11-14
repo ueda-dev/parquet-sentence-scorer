@@ -1,4 +1,4 @@
-from abstruct import ModelAbstruct, ModelResponses
+from model.abstruct import ModelAbstruct, ModelResponses
 import torch
 from transformers import pipeline, AutoTokenizer, AutoModelForSequenceClassification
 

@@ -1,0 +1,1 @@
+from text_compressor.main import FrequencyBasedCompressor

@@ -1,3 +1,3 @@
 # sentence-scoring-dsb
 文章をネガポジ評価して統計分析用のデータセットをビルドするためのツールです。
-wordDict.jsonを用いた独自の感情分析アルゴリズムを用いてスコアリングを行っています。
+センチメント分析モデルは https://huggingface.co/koheiduck/bert-japanese-finetuned-sentiment を利用しました。
