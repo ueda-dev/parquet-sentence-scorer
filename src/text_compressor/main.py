@@ -2,10 +2,10 @@ import json
 import os
 from typing import List, Tuple
 import MeCab
+import ipadic
+from text_compressor.loader import load_word_dict
 
 class FrequencyBasedCompressor:
-    WORD_DICT_PATH = os.path.dirname(__file__) + '/word_dict.json'
-
     def __init__(self, max_length: int = 512):
         """
         Parameters:
@@ -16,11 +16,10 @@ class FrequencyBasedCompressor:
             圧縮後の最大文字数
         """
         self.max_length = max_length
-        self.tokenizer = MeCab.Tagger("-Owakati")
+        self.tokenizer = MeCab.Tagger(f"{ipadic.MECAB_ARGS} -Owakati")
         
         # 単語出現頻度辞書の読み込み
-        with open(FrequencyBasedCompressor.WORD_DICT_PATH, 'r', encoding='utf-8') as f:
-            self.word_dict = json.load(f)
+        self.word_dict = load_word_dict()
     
     def compress(self, text: str) -> str:
         """

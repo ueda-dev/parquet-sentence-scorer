@@ -1,32 +1,18 @@
 from tqdm import tqdm
 from glob import glob
 import os
+import csv
 import pandas as pd
 from tkinter import filedialog
-from logging import Logger, basicConfig, DEBUG
-from rich.logging import RichHandler
 from model.concrete import Model
 from loader import parquet_loader
 from text_compressor import FrequencyBasedCompressor
-
-#-----------------------------------------
-basicConfig(
-    level = DEBUG,
-    format="%(message)s",
-    datefmt="[%X]",
-    handlers=[RichHandler(markup=True,rich_tracebacks=True)]
-)
+from typing import List
 
 #iteration-options------------------------
-TEST_MODE = True
+TEST_MODE = False
 
 #loader-configs---------------------------
-TARGET_WORDS = [
-    'spacex',
-    'tesla',
-    'eron',
-    'musk'
-]
 TARGET_COLUMNS = [
     'text'
 ]
@@ -35,8 +21,8 @@ CHUNK_SIZE = 10000
 USE_N_CPU_CORES = 4
 #-----------------------------------------
 
-def build(inputFileName: str, outputFileName: str, model:Model, compressor:FrequencyBasedCompressor) -> None:
-    input_df = parquet_loader(inputFileName, TARGET_WORDS, TARGET_COLUMNS, CASE_SENSITIVE, CHUNK_SIZE, USE_N_CPU_CORES)
+def build(inputFileName: str, outputFileName: str, model:Model, compressor:FrequencyBasedCompressor, keywords:List[str]) -> None:
+    input_df = parquet_loader(inputFileName, keywords, TARGET_COLUMNS, CASE_SENSITIVE, CHUNK_SIZE, USE_N_CPU_CORES)
 
     input_df['text'] = input_df['text'].apply(compressor.compress)
     modelResponses = model.analyze(input_df['text'].tolist())
@@ -50,25 +36,27 @@ def build(inputFileName: str, outputFileName: str, model:Model, compressor:Frequ
 
 def main():
     #インスタンス初期化-------------------------------
-    logger = Logger('builder')
     model = Model()
     text_compressor = FrequencyBasedCompressor()
 
     #データ入力元を選択-------------------------------
-    print('読み込むデータ(parquet)を格納したディレクトリを選択してください')
-    readDirName = filedialog.askdirectory()
+    readDirName = filedialog.askdirectory(title='読み込むディレクトリを選択')
     if not readDirName or not os.path.exists(readDirName):
-        logger.error('有効なディレクトリが選択されませんでした。')
+        print('ERROR: 有効なディレクトリが選択されませんでした。')
         input('Press any key to close...')
         return
 
     #データ出力先を選択--------------------------------
-    print('データを出力するディレクトリを選択してください')
-    writeDirName = filedialog.askdirectory()
+    writeDirName = filedialog.askdirectory(title='書き込むディレクトリを選択')
     if not writeDirName or not os.path.exists(writeDirName):
-        logger.error('有効なディレクトリが選択されませんでした。')
+        print('ERROR: 有効なディレクトリが選択されませんでした。')
         input('Press any key to close...')
         return
+
+    #検索キーワードを格納したCSVを選択
+    txtFileName = filedialog.askopenfilename(title='検索キーワードを格納したテキストファイルを選択してください', filetypes=[('datafile', '*.txt')])
+    with open(txtFileName, 'r', encoding='utf-8') as f:
+        keywords = f.readlines()
 
     #読み込み対象のファイルを検出 & 出力先を割り当て-----
     targets = [readDirName + '/' + x for x in glob('*.parquet', root_dir=readDirName)]
@@ -93,11 +81,11 @@ def main():
 
     #処理開始-----------------------------------------
     for target, export in tqdm(zip(targets, exports), 'データセット構築中', len(targets)):
-        build(target, export, model, text_compressor)
+        build(target, export, model, text_compressor, keywords)
 
         if TEST_MODE: break
 
-    logger.info('finished process')
+    print('finished process')
     input('Press any key to close...')
 
 if __name__ == '__main__':
