@@ -11,3 +11,5 @@ def load_word_dict() -> DefaultDict[str, int]:
     for t in tqdm(targets, 'loading word-dict'):
         with open(t, 'r', encoding='utf-8') as f:
             init_dict.update(**json.load(f))
+
+    return init_dict
