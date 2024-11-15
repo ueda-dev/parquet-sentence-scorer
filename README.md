@@ -1,4 +1,4 @@
-# sentence-scoring-dsb
+# parquet-sentence-scorer
 
 ## TL;DR
 PARQUETファイルからデータを取り出し、機械学習モデルによりネガティブ / ポジティブ判定を行い、データセットを構築するスクリプトです。
